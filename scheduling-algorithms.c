@@ -4,7 +4,14 @@
 #include <stdbool.h>
 #include <limits.h>
 
-// --- Visual & Formatting Macros ---
+// --- OS Compatibility ---
+#ifdef _WIN32
+#define CLEAR_SCREEN "cls"
+#else
+#define CLEAR_SCREEN "clear"
+#endif
+
+// --- Macros ---
 #define RESET "\033[0m"
 #define RED "\033[1;31m"
 #define GREEN "\033[1;32m"
@@ -13,21 +20,69 @@
 #define MAGENTA "\033[1;35m"
 #define CYAN "\033[1;36m"
 
+// --- ROBUST INPUT HANDLING (THE FIX) ---
+
+// Function to clear leftover characters (like commas) from the input stream
+void clearBuffer()
+{
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF)
+        ;
+}
+
+// Function to safely get an integer, ignoring commas/garbage
+int getSafeInt()
+{
+    int value;
+    int status;
+    char after;
+
+    while (1)
+    {
+        // We try to read an integer
+        status = scanf("%d", &value);
+
+        if (status == 1)
+        {
+            // Check what comes immediately after the number
+            after = getchar();
+
+            // If it's a newline (Enter) or a space, we are good.
+            if (after == '\n' || after == ' ' || after == '\t')
+            {
+                return value;
+            }
+            // If it's a comma, we just ignore it and return the value
+            else if (after == ',')
+            {
+                return value;
+            }
+            // If it's something else (like 10abc), we might want to clear the rest
+            else
+            {
+                // If it was just a separator, continue, otherwise clear line
+                if (after != '\n')
+                    clearBuffer();
+                return value;
+            }
+        }
+        else
+        {
+            // Input failure (e.g., user typed "abc")
+            printf(RED "  Invalid input! Please enter a number: " RESET);
+            clearBuffer(); // Clear the bad input and try again
+        }
+    }
+}
+
 // --- Data Structures ---
 
 typedef struct
 {
     int id;
-    int bt;     // Burst Time
-    int at;     // Arrival Time
-    int pr;     // Priority (Lower value = Higher priority)
-    int rem_bt; // Remaining Burst Time (for preemptive)
-    int ct;     // Completion Time
-    int tat;    // Turnaround Time
-    int wt;     // Waiting Time
+    int bt, at, pr, rem_bt, ct, tat, wt;
 } Process;
 
-// Structure to record the execution timeline for Gantt Chart
 typedef struct
 {
     int pid;
@@ -65,14 +120,11 @@ void printLine(int width)
 
 void printHeader(const char *title)
 {
-    printf("\n" MAGENTA "========================================\n");
+    printf("\n" MAGENTA "==================================================\n");
     printf("   %s\n", title);
-    printf("========================================\n" RESET);
+    printf("==================================================\n" RESET);
 }
 
-// --- IMPROVED VISUALIZATIONS ---
-
-// Helper to count digits in a number
 int countDigits(int n)
 {
     if (n == 0)
@@ -86,26 +138,30 @@ int countDigits(int n)
     return count;
 }
 
+void waitForInput()
+{
+    printf(YELLOW "\n[Press ENTER to step to next second...]" RESET);
+    // Use a simple getchar loop until newline is found
+    int c;
+    while ((c = getchar()) != '\n' && c != EOF)
+        ;
+}
+
+// --- VISUALIZATION MODULES ---
+
 void printGanttChart()
 {
     printf("\n" YELLOW "--- GANTT CHART ---\n" RESET);
-
-    // 1. Calculate Widths
-    // To make it look good, we enforce a minimum width for short processes
-    // and a scaling factor for longer ones.
     int segWidths[1000];
-    int totalWidth = 0;
 
     for (int i = 0; i < historyIndex; i++)
     {
         int duration = history[i].endTime - history[i].startTime;
-        // Scale: duration * 2, but Minimum 4 chars to fit " Px "
         segWidths[i] = (duration * 2);
         if (segWidths[i] < 4)
             segWidths[i] = 4;
     }
 
-    // 2. Print Top Border
     printf(" ");
     for (int i = 0; i < historyIndex; i++)
     {
@@ -115,16 +171,13 @@ void printGanttChart()
     }
     printf("+\n");
 
-    // 3. Print Process IDs (Middle)
     printf(" ");
     for (int i = 0; i < historyIndex; i++)
     {
         printf("|");
-        // Center the Px ID
-        int totalSpaces = segWidths[i] - countDigits(history[i].pid) - 1; // -1 for 'P'
+        int totalSpaces = segWidths[i] - countDigits(history[i].pid) - 1;
         int leftPad = totalSpaces / 2;
         int rightPad = totalSpaces - leftPad;
-
         for (int j = 0; j < leftPad; j++)
             printf(" ");
         printf(CYAN "P%d" RESET, history[i].pid);
@@ -133,7 +186,6 @@ void printGanttChart()
     }
     printf("|\n");
 
-    // 4. Print Bottom Border
     printf(" ");
     for (int i = 0; i < historyIndex; i++)
     {
@@ -143,33 +195,23 @@ void printGanttChart()
     }
     printf("+\n");
 
-    // 5. Print Time Markers (Precisely Aligned)
     printf(" ");
     printf("%d", history[0].startTime);
-
-    int currentPos = countDigits(history[0].startTime); // Cursor position tracker
-    int accumWidth = 0;                                 // Where the vertical bar actually is physically
+    int currentPos = countDigits(history[0].startTime);
+    int accumWidth = 0;
 
     for (int i = 0; i < historyIndex; i++)
     {
-        accumWidth += segWidths[i] + 1; // +1 for the '|' or '+' character width
-
+        accumWidth += segWidths[i] + 1;
         int nextTime = history[i].endTime;
-        int nextTimeWidth = countDigits(nextTime);
-
-        // Calculate spaces needed to reach the next vertical bar
-        // We want to align the number LEFT to the vertical bar position
         int spacesNeeded = accumWidth - currentPos;
-
-        // Safety check if numbers overlap (rare but possible in tiny charts)
         if (spacesNeeded < 1)
             spacesNeeded = 1;
 
         for (int s = 0; s < spacesNeeded; s++)
             printf(" ");
         printf("%d", nextTime);
-
-        currentPos += spacesNeeded + nextTimeWidth;
+        currentPos += spacesNeeded + countDigits(nextTime);
     }
     printf("\n");
 }
@@ -177,7 +219,6 @@ void printGanttChart()
 void displaySchedulingTable(Process p[], int n)
 {
     float avg_wt = 0, avg_tat = 0;
-
     printLine(78);
     printf(CYAN "| %-5s | %-10s | %-10s | %-10s | %-15s | %-12s |\n" RESET,
            "ID", "Arrival", "Burst", "Priority", "Turnaround", "Waiting");
@@ -191,10 +232,8 @@ void displaySchedulingTable(Process p[], int n)
         avg_tat += p[i].tat;
     }
     printLine(78);
-
     printf(YELLOW "\nAverage Waiting Time: %.2f\n", avg_wt / (float)n);
     printf("Average Turnaround Time: %.2f\n" RESET, avg_tat / (float)n);
-
     printGanttChart();
 }
 
@@ -211,92 +250,72 @@ void calculateMetrics(Process p[], int n)
     }
 }
 
-// 1. First Come First Serve
 void runFCFS(Process p[], int n)
 {
     historyIndex = 0;
-    // Sort by Arrival Time
     for (int i = 0; i < n - 1; i++)
-    {
         for (int j = 0; j < n - i - 1; j++)
-        {
             if (p[j].at > p[j + 1].at)
             {
-                Process temp = p[j];
+                Process t = p[j];
                 p[j] = p[j + 1];
-                p[j + 1] = temp;
+                p[j + 1] = t;
             }
-        }
-    }
 
-    int currentTime = 0;
+    int time = 0;
     for (int i = 0; i < n; i++)
     {
-        if (currentTime < p[i].at)
-            currentTime = p[i].at;
-
-        int start = currentTime;
-        currentTime += p[i].bt;
-        p[i].ct = currentTime;
-        addToHistory(p[i].id, start, currentTime);
+        if (time < p[i].at)
+            time = p[i].at;
+        int start = time;
+        time += p[i].bt;
+        p[i].ct = time;
+        addToHistory(p[i].id, start, time);
     }
     calculateMetrics(p, n);
-    printHeader("FCFS Scheduling Results");
+    printHeader("FCFS Results");
     displaySchedulingTable(p, n);
 }
 
-// 2. SJF (Non-Preemptive)
 void runSJF(Process p[], int n)
 {
     historyIndex = 0;
-    int completed = 0, currentTime = 0;
+    int completed = 0, time = 0;
     bool isCompleted[100] = {false};
 
     while (completed != n)
     {
-        int idx = -1;
-        int minBt = INT_MAX;
-
+        int idx = -1, minBt = INT_MAX;
         for (int i = 0; i < n; i++)
         {
-            if (p[i].at <= currentTime && !isCompleted[i])
+            if (p[i].at <= time && !isCompleted[i] && p[i].bt < minBt)
             {
-                if (p[i].bt < minBt)
-                {
-                    minBt = p[i].bt;
-                    idx = i;
-                }
+                minBt = p[i].bt;
+                idx = i;
             }
         }
-
         if (idx != -1)
         {
-            int start = currentTime;
-            currentTime += p[idx].bt;
-            p[idx].ct = currentTime;
+            int start = time;
+            time += p[idx].bt;
+            p[idx].ct = time;
             isCompleted[idx] = true;
             completed++;
-            addToHistory(p[idx].id, start, currentTime);
+            addToHistory(p[idx].id, start, time);
         }
         else
-        {
-            currentTime++;
-        }
+            time++;
     }
     calculateMetrics(p, n);
-    printHeader("SJF (Non-Preemptive) Results");
+    printHeader("SJF Results");
     displaySchedulingTable(p, n);
 }
 
-// 3. SRTF
-void runSRTF(Process p[], int n)
+void runStandardSRTF(Process p[], int n)
 {
     historyIndex = 0;
-    int completed = 0, currentTime = 0;
-    int minRem = INT_MAX;
-    int shortest = -1;
+    int completed = 0, time = 0, minRem = INT_MAX, shortest = -1;
     bool check = false;
-
     for (int i = 0; i < n; i++)
         p[i].rem_bt = p[i].bt;
 
@@ -304,408 +323,435 @@ void runSRTF(Process p[], int n)
     {
         for (int i = 0; i < n; i++)
         {
-            if ((p[i].at <= currentTime) && (p[i].rem_bt < minRem) && (p[i].rem_bt > 0))
+            if ((p[i].at <= time) && (p[i].rem_bt < minRem) && (p[i].rem_bt > 0))
             {
                 minRem = p[i].rem_bt;
                 shortest = i;
                 check = true;
             }
         }
-
         if (!check)
         {
-            currentTime++;
+            time++;
             continue;
         }
 
         p[shortest].rem_bt--;
-        addToHistory(p[shortest].id, currentTime, currentTime + 1);
+        addToHistory(p[shortest].id, time, time + 1);
         minRem = p[shortest].rem_bt;
         if (minRem == 0)
             minRem = INT_MAX;
-
-        currentTime++;
-
+        time++;
         if (p[shortest].rem_bt == 0)
         {
             completed++;
             check = false;
-            p[shortest].ct = currentTime;
+            p[shortest].ct = time;
         }
     }
     calculateMetrics(p, n);
-    printHeader("SRTF (Preemptive SJF) Results");
+    printHeader("SRTF Results");
     displaySchedulingTable(p, n);
 }
 
-// 4. Priority (Non-Preemptive)
-void runPriorityNP(Process p[], int n)
-{
-    historyIndex = 0;
-    int completed = 0, currentTime = 0;
-    bool isCompleted[100] = {false};
-
-    while (completed != n)
-    {
-        int idx = -1;
-        int bestPriority = INT_MAX;
-
-        for (int i = 0; i < n; i++)
-        {
-            if (p[i].at <= currentTime && !isCompleted[i])
-            {
-                if (p[i].pr < bestPriority)
-                {
-                    bestPriority = p[i].pr;
-                    idx = i;
-                }
-                else if (p[i].pr == bestPriority)
-                {
-                    if (p[i].at < p[idx].at)
-                        idx = i;
-                }
-            }
-        }
-
-        if (idx != -1)
-        {
-            int start = currentTime;
-            currentTime += p[idx].bt;
-            p[idx].ct = currentTime;
-            isCompleted[idx] = true;
-            completed++;
-            addToHistory(p[idx].id, start, currentTime);
-        }
-        else
-        {
-            currentTime++;
-        }
-    }
-    calculateMetrics(p, n);
-    printHeader("Priority (Non-Preemptive) Results");
-    displaySchedulingTable(p, n);
-}
-
-// 5. Priority (Preemptive)
-void runPriorityP(Process p[], int n)
-{
-    historyIndex = 0;
-    int completed = 0, currentTime = 0;
-
-    for (int i = 0; i < n; i++)
-        p[i].rem_bt = p[i].bt;
-
-    while (completed != n)
-    {
-        int idx = -1;
-        int bestPriority = INT_MAX;
-
-        for (int i = 0; i < n; i++)
-        {
-            if (p[i].at <= currentTime && p[i].rem_bt > 0)
-            {
-                if (p[i].pr < bestPriority)
-                {
-                    bestPriority = p[i].pr;
-                    idx = i;
-                }
-            }
-        }
-
-        if (idx != -1)
-        {
-            p[idx].rem_bt--;
-            addToHistory(p[idx].id, currentTime, currentTime + 1);
-            currentTime++;
-            if (p[idx].rem_bt == 0)
-            {
-                p[idx].ct = currentTime;
-                completed++;
-            }
-        }
-        else
-        {
-            currentTime++;
-        }
-    }
-    calculateMetrics(p, n);
-    printHeader("Priority (Preemptive) Results");
-    displaySchedulingTable(p, n);
-}
-
-// 6. Round Robin
 void runRoundRobin(Process p[], int n, int quantum)
 {
     historyIndex = 0;
-    int remainingProcesses = n;
-    int currentTime = 0;
-
-    // Sort by arrival first
-    for (int x = 0; x < n - 1; x++)
-    {
-        for (int y = 0; y < n - x - 1; y++)
-        {
-            if (p[y].at > p[y + 1].at)
+    int remProc = n, time = 0;
+    for (int i = 0; i < n; i++)
+        p[i].rem_bt = p[i].bt;
+    // Sort by Arrival first
+    for (int i = 0; i < n - 1; i++)
+        for (int j = 0; j < n - i - 1; j++)
+            if (p[j].at > p[j + 1].at)
             {
-                Process temp = p[y];
-                p[y] = p[y + 1];
-                p[y + 1] = temp;
+                Process t = p[j];
+                p[j] = p[j + 1];
+                p[j + 1] = t;
             }
-        }
-    }
 
-    for (int j = 0; j < n; j++)
-        p[j].rem_bt = p[j].bt;
-
-    while (remainingProcesses > 0)
+    while (remProc > 0)
     {
-        bool doneSomething = false;
-
+        bool done = false;
         for (int i = 0; i < n; i++)
         {
-            if (p[i].rem_bt > 0 && p[i].at <= currentTime)
+            if (p[i].rem_bt > 0 && p[i].at <= time)
             {
-                doneSomething = true;
-                int executeTime = (p[i].rem_bt > quantum) ? quantum : p[i].rem_bt;
-
-                addToHistory(p[i].id, currentTime, currentTime + executeTime);
-                currentTime += executeTime;
-                p[i].rem_bt -= executeTime;
-
+                done = true;
+                int exec = (p[i].rem_bt > quantum) ? quantum : p[i].rem_bt;
+                addToHistory(p[i].id, time, time + exec);
+                time += exec;
+                p[i].rem_bt -= exec;
                 if (p[i].rem_bt == 0)
                 {
-                    p[i].ct = currentTime;
-                    remainingProcesses--;
+                    p[i].ct = time;
+                    remProc--;
                 }
             }
         }
-        if (!doneSomething)
-            currentTime++;
+        if (!done)
+            time++;
     }
     calculateMetrics(p, n);
     printHeader("Round Robin Results");
     displaySchedulingTable(p, n);
 }
 
-// --- MEMORY FUNCTIONS ---
-void displayMemoryTable(int processes, int processSize[], int allocation[])
+// --- INTERACTIVE TEACHING MODE ---
+
+void printDashboard(int time, int runningID, Process p[], int n, char *explanation)
 {
-    printLine(48);
-    printf(CYAN "| %-10s | %-15s | %-15s |\n" RESET, "Process No", "Process Size", "Block No");
-    printLine(48);
-    for (int i = 0; i < processes; i++)
+    system(CLEAR_SCREEN);
+    printHeader("INTERACTIVE TEACHING MODE");
+    printf(CYAN " Current Time: " RESET "%d\n\n", time);
+
+    printf("  +-------+       \n");
+    if (runningID != -1)
+        printf("  |  P%d   | <--- " GREEN "RUNNING" RESET "\n", runningID);
+    else
+        printf("  | IDLE  | <--- " RED "IDLE" RESET "\n");
+    printf("  +-------+       \n\n");
+
+    printf("  " YELLOW "Ready Queue: " RESET "[ ");
+    bool anyReady = false;
+    for (int i = 0; i < n; i++)
     {
-        printf("| %-10d | %-15d | ", i + 1, processSize[i]);
-        if (allocation[i] != -1)
-            printf(GREEN "%-15d" RESET " |\n", allocation[i] + 1);
-        else
-            printf(RED "%-15s" RESET " |\n", "Not Allocated");
-    }
-    printLine(48);
-}
-void implementBestFit(int blockSize[], int blocks, int processSize[], int processes)
-{
-    int allocation[processes], occupied[blocks];
-    for (int i = 0; i < processes; i++)
-        allocation[i] = -1;
-    for (int i = 0; i < blocks; i++)
-        occupied[i] = 0;
-    for (int i = 0; i < processes; i++)
-    {
-        int indexPlaced = -1;
-        for (int j = 0; j < blocks; j++)
+        if (p[i].at <= time && p[i].rem_bt > 0 && p[i].id != runningID)
         {
-            if (blockSize[j] >= processSize[i] && !occupied[j])
-            {
-                if (indexPlaced == -1)
-                    indexPlaced = j;
-                else if (blockSize[j] < blockSize[indexPlaced])
-                    indexPlaced = j;
-            }
-        }
-        if (indexPlaced != -1)
-        {
-            allocation[i] = indexPlaced;
-            occupied[indexPlaced] = 1;
+            printf("P%d(%d) ", p[i].id, p[i].rem_bt);
+            anyReady = true;
         }
     }
-    printHeader("Best Fit Allocation Results");
-    displayMemoryTable(processes, processSize, allocation);
-}
-void implementFirstFit(int blockSize[], int blocks, int processSize[], int processes)
-{
-    int allocation[processes], occupied[blocks];
-    for (int i = 0; i < processes; i++)
-        allocation[i] = -1;
-    for (int i = 0; i < blocks; i++)
-        occupied[i] = 0;
-    for (int i = 0; i < processes; i++)
-    {
-        for (int j = 0; j < blocks; j++)
-        {
-            if (!occupied[j] && blockSize[j] >= processSize[i])
-            {
-                allocation[i] = j;
-                occupied[j] = 1;
-                break;
-            }
-        }
-    }
-    printHeader("First Fit Allocation Results");
-    displayMemoryTable(processes, processSize, allocation);
-}
-void implementWorstFit(int blockSize[], int blocks, int processSize[], int processes)
-{
-    int allocation[processes], occupied[blocks];
-    for (int i = 0; i < processes; i++)
-        allocation[i] = -1;
-    for (int i = 0; i < blocks; i++)
-        occupied[i] = 0;
-    for (int i = 0; i < processes; i++)
-    {
-        int indexPlaced = -1;
-        for (int j = 0; j < blocks; j++)
-        {
-            if (blockSize[j] >= processSize[i] && !occupied[j])
-            {
-                if (indexPlaced == -1)
-                    indexPlaced = j;
-                else if (blockSize[j] > blockSize[indexPlaced])
-                    indexPlaced = j;
-            }
-        }
-        if (indexPlaced != -1)
-        {
-            allocation[i] = indexPlaced;
-            occupied[indexPlaced] = 1;
-        }
-    }
-    printHeader("Worst Fit Allocation Results");
-    displayMemoryTable(processes, processSize, allocation);
+    if (!anyReady)
+        printf("Empty ");
+    printf("]\n\n");
+
+    printf(MAGENTA "  LOGIC EXPLAINER:" RESET "\n  %s\n", explanation);
+    printLine(60);
 }
 
-// --- MAIN DRIVER ---
+void runInteractiveSRTF(Process p[], int n)
+{
+    for (int i = 0; i < n; i++)
+        p[i].rem_bt = p[i].bt;
+    int completed = 0, currentTime = 0, prevProcess = -1;
+    char explanation[256];
+
+    printf(GREEN "\nStarting Interactive Simulation... (Maximize window)\n" RESET);
+    waitForInput(); // Using fixed waitForInput
+
+    while (completed != n)
+    {
+        int idx = -1, minRem = INT_MAX;
+        for (int i = 0; i < n; i++)
+        {
+            if (p[i].at <= currentTime && p[i].rem_bt > 0)
+            {
+                if (p[i].rem_bt < minRem)
+                {
+                    minRem = p[i].rem_bt;
+                    idx = i;
+                }
+                if (p[i].rem_bt == minRem && p[i].at < p[idx].at)
+                    idx = i;
+            }
+        }
+
+        if (idx != -1)
+        {
+            if (prevProcess != -1 && prevProcess != idx)
+                sprintf(explanation, "PREEMPTION! P%d is shorter than P%d.", p[idx].id, p[prevProcess].id);
+            else if (prevProcess == idx)
+                sprintf(explanation, "P%d continues running.", p[idx].id);
+            else
+                sprintf(explanation, "P%d selected (Shortest Remaining).", p[idx].id);
+
+            printDashboard(currentTime, p[idx].id, p, n, explanation);
+            waitForInput();
+
+            p[idx].rem_bt--;
+            prevProcess = idx;
+            if (p[idx].rem_bt == 0)
+            {
+                completed++;
+                p[idx].ct = currentTime + 1;
+                prevProcess = -1;
+            }
+        }
+        else
+        {
+            sprintf(explanation, "No process arrived. CPU is IDLE.");
+            printDashboard(currentTime, -1, p, n, explanation);
+            waitForInput();
+        }
+        currentTime++;
+    }
+    calculateMetrics(p, n);
+    system(CLEAR_SCREEN);
+    printHeader("Interactive Session Finished");
+    displaySchedulingTable(p, n);
+}
+
+// --- BANKER'S ALGORITHM ---
+
+void runBankersAlgorithm()
+{
+    int n, m;
+    printHeader("BANKER'S ALGORITHM");
+    printf("Enter number of processes: ");
+    n = getSafeInt();
+    printf("Enter number of resource types: ");
+    m = getSafeInt();
+
+    int alloc[n][m], max[n][m], avail[m], need[n][m], safeSeq[n];
+    int work[m];
+    bool finish[n];
+
+    printf("\nEnter Allocation Matrix:\n");
+    for (int i = 0; i < n; i++)
+    {
+        printf("P%d: ", i);
+        for (int j = 0; j < m; j++)
+            alloc[i][j] = getSafeInt();
+    }
+
+    printf("\nEnter Max Matrix:\n");
+    for (int i = 0; i < n; i++)
+    {
+        printf("P%d: ", i);
+        for (int j = 0; j < m; j++)
+        {
+            max[i][j] = getSafeInt();
+            need[i][j] = max[i][j] - alloc[i][j];
+        }
+    }
+
+    printf("\nEnter Available Resources: ");
+    for (int i = 0; i < m; i++)
+    {
+        avail[i] = getSafeInt();
+        work[i] = avail[i];
+    }
+
+    for (int i = 0; i < n; i++)
+        finish[i] = false;
+    int count = 0;
+    while (count < n)
+    {
+        bool found = false;
+        for (int p = 0; p < n; p++)
+        {
+            if (!finish[p])
+            {
+                int j;
+                for (j = 0; j < m; j++)
+                    if (need[p][j] > work[j])
+                        break;
+                if (j == m)
+                {
+                    for (int k = 0; k < m; k++)
+                        work[k] += alloc[p][k];
+                    safeSeq[count++] = p;
+                    finish[p] = true;
+                    found = true;
+                }
+            }
+        }
+        if (!found)
+        {
+            printf(RED "\nSystem is in an UNSAFE state! (Deadlock Risk)\n" RESET);
+            return;
+        }
+    }
+    printf(GREEN "\nSystem is in a SAFE state.\nSafe Sequence: " RESET);
+    for (int i = 0; i < n; i++)
+        printf("P%d%s", safeSeq[i], (i == n - 1) ? "" : " -> ");
+    printf("\n");
+}
+
+// --- MEMORY ALLOCATION ---
+
+void displayMemoryAnalysis(int processes, int processSize[], int allocation[], int blockSize[])
+{
+    int totalInternalFrag = 0, unallocatedCount = 0;
+    printHeader("MEMORY ANALYSIS");
+    printf(CYAN "| %-10s | %-12s | %-10s | %-15s |\n" RESET, "Process", "Size", "Block", "Internal Frag");
+    printLine(60);
+
+    for (int i = 0; i < processes; i++)
+    {
+        printf("| P%-8d | %-12d | ", i + 1, processSize[i]);
+        if (allocation[i] != -1)
+        {
+            int frag = blockSize[allocation[i]] - processSize[i];
+            totalInternalFrag += frag;
+            printf("%-10d | " GREEN "%-15d" RESET " |\n", allocation[i] + 1, frag);
+        }
+        else
+        {
+            unallocatedCount++;
+            printf(RED "%-10s" RESET " | %-15s |\n", "N/A", "N/A");
+        }
+    }
+    printLine(60);
+    printf(YELLOW "Total Internal Fragmentation: %d KB\n", totalInternalFrag);
+    printf("Unallocated Processes: %d\n" RESET, unallocatedCount);
+}
+
+void runMemoryAllocation()
+{
+    int blocks, processes, type;
+    int bSize[100], pSize[100];
+
+    printf("Enter number of memory blocks: ");
+    blocks = getSafeInt();
+    printf("Enter sizes of blocks (separated by space or enter): ");
+    for (int i = 0; i < blocks; i++)
+        bSize[i] = getSafeInt();
+
+    printf("Enter number of processes: ");
+    processes = getSafeInt();
+    printf("Enter sizes of processes: ");
+    for (int i = 0; i < processes; i++)
+        pSize[i] = getSafeInt();
+
+    while (1)
+    {
+        printf("\n" BLUE "Choose Allocation Strategy:\n" RESET);
+        printf("1. Best Fit\n2. First Fit\n3. Worst Fit\n4. Back\nSelection: ");
+        type = getSafeInt();
+        if (type == 4)
+            break;
+
+        int allocation[processes], occupied[blocks];
+        for (int i = 0; i < processes; i++)
+            allocation[i] = -1;
+        for (int i = 0; i < blocks; i++)
+            occupied[i] = 0;
+
+        for (int i = 0; i < processes; i++)
+        {
+            int idx = -1;
+            for (int j = 0; j < blocks; j++)
+            {
+                if (!occupied[j] && bSize[j] >= pSize[i])
+                {
+                    if (type == 1)
+                    {
+                        if (idx == -1 || bSize[j] < bSize[idx])
+                            idx = j;
+                    }
+                    else if (type == 2)
+                    {
+                        idx = j;
+                        break;
+                    }
+                    else if (type == 3)
+                    {
+                        if (idx == -1 || bSize[j] > bSize[idx])
+                            idx = j;
+                    }
+                }
+            }
+            if (idx != -1)
+            {
+                allocation[i] = idx;
+                occupied[idx] = 1;
+            }
+        }
+        displayMemoryAnalysis(processes, pSize, allocation, bSize);
+    }
+}
+
+// --- MAIN MENU ---
 
 int main()
 {
     int choice;
     while (1)
     {
-        printHeader("OS ALGORITHM SIMULATOR");
-        printf(YELLOW "1." RESET " Memory Allocation\n");
-        printf(YELLOW "2." RESET " CPU Scheduling\n");
-        printf(YELLOW "3." RESET " Exit\n");
+        printHeader("ULTIMATE OS SIMULATOR");
+        printf(YELLOW "1." RESET " CPU Scheduling\n");
+        printf(YELLOW "2." RESET " Memory Allocation\n");
+        printf(YELLOW "3." RESET " Deadlock Avoidance\n");
+        printf(YELLOW "4." RESET " Exit\n");
         printf(CYAN "\nSelect Option: " RESET);
-        scanf("%d", &choice);
+        choice = getSafeInt();
 
-        if (choice == 3)
+        if (choice == 4)
             break;
 
-        if (choice == 1)
+        switch (choice)
         {
-            int blocks, blockSize[100], processSize[100], processes, type;
-            printf("Enter number of memory blocks: ");
-            scanf("%d", &blocks);
-            printf("Enter size of each block: ");
-            for (int i = 0; i < blocks; i++)
-                scanf("%d", &blockSize[i]);
-            printf("Enter number of processes: ");
-            scanf("%d", &processes);
-            printf("Enter size of each process: ");
-            for (int i = 0; i < processes; i++)
-                scanf("%d", &processSize[i]);
-
-            while (1)
-            {
-                printf("\n" BLUE "Choose Algorithm:\n" RESET);
-                printf("1. Best Fit\n2. First Fit\n3. Worst Fit\n4. Back to Main Menu\n");
-                printf(CYAN "Selection: " RESET);
-                scanf("%d", &type);
-                if (type == 4)
-                    break;
-
-                if (type == 1)
-                    implementBestFit(blockSize, blocks, processSize, processes);
-                else if (type == 2)
-                    implementFirstFit(blockSize, blocks, processSize, processes);
-                else if (type == 3)
-                    implementWorstFit(blockSize, blocks, processSize, processes);
-            }
-        }
-        else if (choice == 2)
+        case 1:
         {
             int n;
-            Process original_p[100];
-            Process working_p[100];
-
-            printHeader("CPU Scheduling Setup");
+            Process original[100], working[100];
+            printHeader("CPU SCHEDULING SETUP");
             printf("Enter number of processes: ");
-            scanf("%d", &n);
-
+            n = getSafeInt();
             for (int i = 0; i < n; i++)
             {
-                original_p[i].id = i + 1;
-                printf("\nProcess P%d:\n", i + 1);
-                printf("  Burst Time: ");
-                scanf("%d", &original_p[i].bt);
-                printf("  Arrival Time: ");
-                scanf("%d", &original_p[i].at);
-                printf("  Priority (Lower # = Higher Priority): ");
-                scanf("%d", &original_p[i].pr);
+                original[i].id = i + 1;
+                printf("P%d (Burst, Arrival, Priority): ", i + 1);
+                original[i].bt = getSafeInt();
+                original[i].at = getSafeInt();
+                original[i].pr = getSafeInt();
             }
 
             while (1)
             {
                 for (int i = 0; i < n; i++)
-                    working_p[i] = original_p[i];
+                    working[i] = original[i];
+                int algo, mode = 1;
 
-                int type, subType;
-                printf("\n" BLUE "Choose Scheduling Algorithm:\n" RESET);
-                printf("1. FCFS\n2. SJF (Non-Preemptive)\n3. SRTF (Preemptive SJF)\n");
-                printf("4. Priority Scheduling\n5. Round Robin\n6. Back to Main Menu\n");
-                printf(CYAN "Selection: " RESET);
-                scanf("%d", &type);
+                printf("\n" BLUE "Select Algorithm:" RESET "\n");
+                printf("1. FCFS\n2. SJF\n3. SRTF\n4. Round Robin\n5. Back\n");
+                printf("Selection: ");
+                algo = getSafeInt();
 
-                if (type == 6)
+                if (algo == 5)
                     break;
 
-                switch (type)
+                if (algo == 3)
                 {
-                case 1:
-                    runFCFS(working_p, n);
-                    break;
-                case 2:
-                    runSJF(working_p, n);
-                    break;
-                case 3:
-                    runSRTF(working_p, n);
-                    break;
-                case 4:
-                    printf("\n  1. Non-Preemptive\n  2. Preemptive\n  Select: ");
-                    scanf("%d", &subType);
-                    if (subType == 1)
-                        runPriorityNP(working_p, n);
-                    else
-                        runPriorityP(working_p, n);
-                    break;
-                case 5:
-                {
-                    int quantum;
-                    printf("Enter Time Quantum: ");
-                    scanf("%d", &quantum);
-                    runRoundRobin(working_p, n, quantum);
-                    break;
-                }
-                default:
-                    printf(RED "Invalid.\n" RESET);
+                    printf("\nMode: 1. Standard  2. " MAGENTA "Interactive" RESET "\nAction: ");
+                    mode = getSafeInt();
                 }
 
-                printf(GREEN "\nDo you want to try another algorithm with the SAME values? (1=Yes, 0=No): " RESET);
-                int cont;
-                scanf("%d", &cont);
-                if (cont == 0)
+                if (mode == 2 && algo == 3)
+                    runInteractiveSRTF(working, n);
+                else
+                {
+                    if (algo == 1)
+                        runFCFS(working, n);
+                    else if (algo == 2)
+                        runSJF(working, n);
+                    else if (algo == 3)
+                        runStandardSRTF(working, n);
+                    else if (algo == 4)
+                    {
+                        int q;
+                        printf("Enter Time Quantum: ");
+                        q = getSafeInt();
+                        runRoundRobin(working, n, q);
+                    }
+                }
+                printf(GREEN "\nRun another? (1=Yes, 0=No): " RESET);
+                int c = getSafeInt();
+                if (!c)
                     break;
             }
+            break;
+        }
+        case 2:
+            runMemoryAllocation();
+            break;
+        case 3:
+            runBankersAlgorithm();
+            break;
+        default:
+            printf(RED "Invalid Choice.\n" RESET);
         }
     }
     return 0;
